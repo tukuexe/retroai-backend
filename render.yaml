@@ -4,7 +4,7 @@ services:
     env: node
     buildCommand: ""
     startCommand: node server.js
-    repo: https://github.com/tukuexe/rtro-bckend-rndr
+    repo: https://github.com/tukuexe/retroai-backend
     branch: main
     envVars:
       - key: NODE_ENV
