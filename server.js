@@ -1,38 +1,45 @@
-// Render web service – PORT supplied by Render
 const express = require('express');
 const axios   = require('axios');
 
 const app = express();
 app.use(express.json());
+app.use(require('cors')()); // safety for frontend
 
-// HARDCODED – replace ONLY if you rotate token
 const BOT_TOKEN = '8170582086:AAEb5LIj1flmUeeBlYQZaNm81lxufzA3Zyo';
 const CHAT_ID   = '6142816761';
 
+// longer list + higher timeout
 const AI_APIS = [
-  'https://api.afforai.com/api/chat_completion',
-  'https://api.deepai.org/api/text-generator',
-  'https://api.perplexity.ai/chat/completions',
-  'https://api.together.xyz/v1/chat/completions',
-  'https://api.mistral.ai/v1/chat/completions',
-  'https://api.openai-proxy.org/v1/chat/completions',
-  'https://api.groq.com/openai/v1/chat/completions',
-  'https://api.huggingface.co/models/microsoft/DialoGPT-large',
-  'https://api.cohere.ai/generate',
-  'https://api.writesonic.com/v2.0/generate'
+  { url: 'https://api.afforai.com/api/chat_completion', body: q => ({ prompt: q, max_tokens: 150 }) },
+  { url: 'https://api.deepai.org/api/text-generator', body: q => ({ text: q }) },
+  { url: 'https://api.perplexity.ai/chat/completions', body: q => ({ model: 'pplx-70b-online', messages: [{ role: 'user', content: q }] }) },
+  { url: 'https://api.together.xyz/v1/chat/completions', body: q => ({ model: 'togethercomputer/RedPajama-INCITE-7B-Instruct', messages: [{ role: 'user', content: q }], max_tokens: 150 }) },
+  { url: 'https://api.groq.com/openai/v1/chat/completions', body: q => ({ model: 'mixtral-8x7b-32768', messages: [{ role: 'user', content: q }], max_tokens: 150 }) },
+  { url: 'https://api.openai-proxy.org/v1/chat/completions', body: q => ({ model: 'gpt-3.5-turbo', messages: [{ role: 'user', content: q }], max_tokens: 150 }) },
+  { url: 'https://api.huggingface.co/models/microsoft/DialoGPT-large', body: q => ({ inputs: q }) },
+  { url: 'https://api.cohere.ai/generate', body: q => ({ prompt: q, max_tokens: 150 }) },
+  { url: 'https://dungeon.chatsite.ai/v1/chat/completions', body: q => ({ model: 'gpt-3.5-turbo', messages: [{ role: 'user', content: q }] }) },
+  { url: 'https://chatgpt-api.shn.hk/v1/chat/completions', body: q => ({ model: 'gpt-3.5-turbo', messages: [{ role: 'user', content: q }] }) }
 ];
 
 async function fallbackAI(prompt) {
-  for (const url of AI_APIS) {
+  for (const api of AI_APIS) {
     try {
-      const { data } = await axios.post(url, { prompt, max_tokens: 150 }, {
+      const { data } = await axios.post(api.url, api.body(prompt), {
         headers: { Authorization: 'Bearer free' },
-        timeout: 3000
+        timeout: 8000 // 8 s
       });
-      if (data?.text) return data.text;
+      // dig out text from various response shapes
+      const text =
+        data?.choices?.[0]?.message?.content ||
+        data?.text ||
+        data?.generated_text ||
+        data?.output ||
+        null;
+      if (text) return text.trim();
     } catch {}
   }
-  return '❌ AI is offline. Try again later.';
+  return '❌ All free AI endpoints exhausted. Try again later.';
 }
 
 // ---------- routes ----------
@@ -42,7 +49,6 @@ app.post('/chat', async (req, res) => {
 
   const reply = await fallbackAI(message);
 
-  // fire-and-forget to Telegram
   axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
     chat_id: CHAT_ID,
     text: `User: ${message}\nBot: ${reply}`
@@ -51,23 +57,18 @@ app.post('/chat', async (req, res) => {
   res.json({ reply });
 });
 
-app.post('/telegram-webhook', async (req, res) => {
+app.post('/telegram-webhook', (req, res) => {
   const msg = req.body.message;
-  if (!msg?.text) return res.sendStatus(200);
-
-  const { text, chat: { id } } = msg;
-  if (text === '/getdbchat' && String(id) === String(CHAT_ID)) {
-    await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+  if (msg?.text === '/getdbchat' && String(msg.chat.id) === String(CHAT_ID)) {
+    axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
       chat_id: CHAT_ID,
-      text: '📦 Full chat log: https://your-site.com/placeholder'
+      text: '📦 Chat logs: https://your-site.com/placeholder'
     });
   }
   res.sendStatus(200);
 });
 
-// health check
 app.get('/', (_, res) => res.send('RetroAI backend alive'));
 
-// Render supplies PORT env var
 const PORT = process.env.PORT || 4000;
 app.listen(PORT, () => console.log(`Listening on ${PORT}`));
